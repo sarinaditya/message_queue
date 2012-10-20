@@ -10,7 +10,7 @@ message is anything your application wants to send between threads.
 
 # How does it work?
 
-The library uses a slab allocator protected by a spinlock`to allocate memory
+The library uses a slab allocator protected by a spinlock to allocate memory
 for messages. Then, your application can construct whatever it needs to send
 in-place. The library never copies it--instead, it reserves a few bytes before
 the pointer it returns to track the message internally. When you write the
