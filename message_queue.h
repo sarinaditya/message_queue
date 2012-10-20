@@ -6,6 +6,9 @@ struct message_queue {
 	struct queue_ent *freelist;
 	int_fast8_t freelist_lock;
 	int message_size;
+	struct queue_ent *queue_head;
+	struct queue_ent **queue_tail;
+	int_fast8_t queue_lock;
 };
 
 #ifdef __cplusplus
@@ -15,6 +18,8 @@ extern "C" {
 int message_queue_init(struct message_queue *queue, int message_size);
 void *message_queue_message_alloc(struct message_queue *queue);
 void message_queue_message_free(struct message_queue *queue, void *message);
+void message_queue_write(struct message_queue *queue, void *message);
+void *message_queue_tryread(struct message_queue *queue);
 int message_queue_destroy(struct message_queue *queue);
 
 #ifdef __cplusplus
