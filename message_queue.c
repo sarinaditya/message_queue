@@ -45,17 +45,15 @@ int message_queue_init(struct message_queue *queue, int message_size) {
 }
 
 void *message_queue_message_alloc(struct message_queue *queue) {
-	struct queue_ent *rv = queue->freelist;
-	while(rv) {
-		spinlock_lock(&queue->freelist_lock);
-		rv = queue->freelist;
-		if(rv) {
-			queue->freelist = rv->next;
-			spinlock_unlock(&queue->freelist_lock);
-			return &rv->user_data;
-		}
+	struct queue_ent *rv;
+	spinlock_lock(&queue->freelist_lock);
+	rv = queue->freelist;
+	if(rv) {
+		queue->freelist = rv->next;
 		spinlock_unlock(&queue->freelist_lock);
+		return &rv->user_data;
 	}
+	spinlock_unlock(&queue->freelist_lock);
 	rv = malloc(queue->message_size + offsetof(struct queue_ent, user_data));
 	return &rv->user_data;
 }
