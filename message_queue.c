@@ -2,6 +2,7 @@
 #include <stdlib.h>
 #include <stddef.h>
 #include <stdbool.h>
+#include <sched.h>
 
 struct queue_ent {
 	struct queue_ent *next;
@@ -18,7 +19,7 @@ struct queue_ent {
 
 static inline void spinlock_lock(int_fast8_t *lock) {
 	while(__sync_lock_test_and_set(lock, 1)) {
-		do { __sync_synchronize(); } while(*lock);
+		do { sched_yield(); __sync_synchronize(); } while(*lock);
 	}
 }
 
