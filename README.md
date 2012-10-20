@@ -34,6 +34,9 @@ separate spinlock.
 
 * It's new and so not widely tested. In fact, it's only been tested at all on
   two x86_64 machines, running Mac OS X and Linux.
+* It may be overly tuned to my Core 2 Duo. Performance is tricky and often
+  very hardware dependent. Hopefully wider exposure will help this work well
+  on a wider variety of hardware.
 * I have no clue how well it scales past two CPUs. Anyone want to try it on a
   bigger, beefier machine?
 * You have to know how big the largest message you want to send on a given
