@@ -4,6 +4,7 @@
 #include <stdbool.h>
 #include <stdio.h>
 #include <unistd.h>
+#include <fcntl.h>
 
 struct queue_ent {
 	struct queue_ent *next;
