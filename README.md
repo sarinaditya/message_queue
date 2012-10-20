@@ -66,7 +66,7 @@ To read a message:
 
 If you'd rather not block to wait for a new message:
 
-    /* Blocks until a message is available */
+    /* Returns NULL if no message is available */
     struct my_message *message = message_queue_tryread(&queue);
     if(message) {
         /* Do something with the message here */
