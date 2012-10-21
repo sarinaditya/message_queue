@@ -56,7 +56,7 @@ void message_queue_message_free(struct message_queue *queue, void *message) {
 	spinlock_unlock(&queue->freelist_lock);
 }
 
-int message_queue_destroy(struct message_queue *queue) {
+void message_queue_destroy(struct message_queue *queue) {
 	struct queue_ent *head = queue->freelist;
 	while(head) {
 		struct queue_ent *next = head->next;
