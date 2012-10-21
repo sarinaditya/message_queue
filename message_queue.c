@@ -61,69 +61,69 @@ static inline void spinlock_unlock(int_fast8_t *lock) {
 
 int message_queue_init(struct message_queue *queue, int message_size) {
 	char sem_name[128];
-	queue->freelist = NULL;
-	queue->freelist_lock = 0;
-	queue->message_size = message_size;
-	queue->queue_head = NULL;
-	queue->queue_tail = &queue->queue_head;
-	queue->queue_lock = 0;
-	queue->blocked_readers = 0;
+	queue->allocator.freelist = NULL;
+	queue->allocator.lock = 0;
+	queue->allocator.message_size = message_size;
+	queue->queue.head = NULL;
+	queue->queue.tail = &queue->queue.head;
+	queue->queue.lock = 0;
+	queue->queue.blocked_readers = 0;
 	snprintf(sem_name, 128, "%d_%p", getpid(), queue);
 	sem_name[127] = '\0';
-	queue->sem = sem_open(sem_name, O_CREAT | O_EXCL, 0600);
+	queue->queue.sem = sem_open(sem_name, O_CREAT | O_EXCL, 0600);
 	sem_unlink(sem_name);
 }
 
 void *message_queue_message_alloc(struct message_queue *queue) {
 	struct queue_ent *rv;
-	spinlock_lock(&queue->freelist_lock);
-	rv = queue->freelist;
+	spinlock_lock(&queue->allocator.lock);
+	rv = queue->allocator.freelist;
 	if(rv) {
-		queue->freelist = rv->next;
-		spinlock_unlock(&queue->freelist_lock);
+		queue->allocator.freelist = rv->next;
+		spinlock_unlock(&queue->allocator.lock);
 		return &rv->user_data;
 	}
-	spinlock_unlock(&queue->freelist_lock);
-	rv = malloc(queue->message_size + offsetof(struct queue_ent, user_data));
+	spinlock_unlock(&queue->allocator.lock);
+	rv = malloc(queue->allocator.message_size + offsetof(struct queue_ent, user_data));
 	return &rv->user_data;
 }
 
 void message_queue_message_free(struct message_queue *queue, void *message) {
 	struct queue_ent *x = message - offsetof(struct queue_ent, user_data);
-	spinlock_lock(&queue->freelist_lock);
-	x->next = queue->freelist;
-	queue->freelist = x;
-	spinlock_unlock(&queue->freelist_lock);
+	spinlock_lock(&queue->allocator.lock);
+	x->next = queue->allocator.freelist;
+	queue->allocator.freelist = x;
+	spinlock_unlock(&queue->allocator.lock);
 }
 
 void message_queue_write(struct message_queue *queue, void *message) {
 	struct queue_ent *x = message - offsetof(struct queue_ent, user_data);
-	spinlock_lock(&queue->queue_lock);
+	spinlock_lock(&queue->queue.lock);
 	x->next = NULL;
-	*queue->queue_tail = x;
-	queue->queue_tail = &x->next;
-	if(queue->blocked_readers) {
-		--queue->blocked_readers;
-		spinlock_unlock(&queue->queue_lock);
-		sem_post(queue->sem);
+	*queue->queue.tail = x;
+	queue->queue.tail = &x->next;
+	if(queue->queue.blocked_readers) {
+		--queue->queue.blocked_readers;
+		spinlock_unlock(&queue->queue.lock);
+		sem_post(queue->queue.sem);
 	} else {
-		spinlock_unlock(&queue->queue_lock);
+		spinlock_unlock(&queue->queue.lock);
 	}
 }
 
 void *message_queue_tryread(struct message_queue *queue) {
-	struct queue_ent *rv = queue->queue_head;
+	struct queue_ent *rv = queue->queue.head;
 	while(rv) {
-		spinlock_lock(&queue->queue_lock);
-		rv = queue->queue_head;
+		spinlock_lock(&queue->queue.lock);
+		rv = queue->queue.head;
 		if(rv) {
-			queue->queue_head = rv->next;
+			queue->queue.head = rv->next;
 			if(!rv->next)
-				queue->queue_tail = &queue->queue_head;
-			spinlock_unlock(&queue->queue_lock);
+				queue->queue.tail = &queue->queue.head;
+			spinlock_unlock(&queue->queue.lock);
 			return &rv->user_data;
 		}
-		spinlock_unlock(&queue->queue_lock);
+		spinlock_unlock(&queue->queue.lock);
 	}
 	return NULL;
 }
@@ -131,41 +131,41 @@ void *message_queue_tryread(struct message_queue *queue) {
 void *message_queue_read(struct message_queue *queue) {
 	while(true) {
 		for(int i=9;i>=0;--i) {
-			struct queue_ent *rv = queue->queue_head;
+			struct queue_ent *rv = queue->queue.head;
 			if(!rv) {
 				if(!i) {
-					spinlock_lock(&queue->queue_lock);
-					++queue->blocked_readers;
-					spinlock_unlock(&queue->queue_lock);
+					spinlock_lock(&queue->queue.lock);
+					++queue->queue.blocked_readers;
+					spinlock_unlock(&queue->queue.lock);
 					break;
 				}
 				__sync_synchronize();
 				continue;
 			}
-			spinlock_lock(&queue->queue_lock);
-			rv = queue->queue_head;
+			spinlock_lock(&queue->queue.lock);
+			rv = queue->queue.head;
 			if(rv) {
-				queue->queue_head = rv->next;
+				queue->queue.head = rv->next;
 				if(!rv->next)
-					queue->queue_tail = &queue->queue_head;
-				spinlock_unlock(&queue->queue_lock);
+					queue->queue.tail = &queue->queue.head;
+				spinlock_unlock(&queue->queue.lock);
 				return &rv->user_data;
 			}
 			if(!i) {
-				++queue->blocked_readers;
+				++queue->queue.blocked_readers;
 			}
-			spinlock_unlock(&queue->queue_lock);
+			spinlock_unlock(&queue->queue.lock);
 		}
-		sem_wait(queue->sem);
+		sem_wait(queue->queue.sem);
 	}
 }
 
 int message_queue_destroy(struct message_queue *queue) {
-	struct queue_ent *head = queue->freelist;
+	struct queue_ent *head = queue->allocator.freelist;
 	while(head) {
 		struct queue_ent *next = head->next;
 		free(head);
 		head = next;
 	}
-	sem_close(queue->sem);
+	sem_close(queue->queue.sem);
 }
