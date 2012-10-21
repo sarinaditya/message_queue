@@ -27,66 +27,66 @@ static inline void spinlock_unlock(int_fast8_t *lock) {
 }
 
 int message_queue_init(struct message_queue *queue, int message_size) {
-	queue->freelist = NULL;
-	queue->freelist_lock = 0;
-	queue->message_size = message_size;
-	queue->queue_head = NULL;
-	queue->queue_tail = &queue->queue_head;
-	queue->queue_lock = 0;
+	queue->allocator.freelist = NULL;
+	queue->allocator.lock = 0;
+	queue->allocator.message_size = message_size;
+	queue->queue.head = NULL;
+	queue->queue.tail = &queue->queue.head;
+	queue->queue.lock = 0;
 }
 
 void *message_queue_message_alloc(struct message_queue *queue) {
-	struct queue_ent *rv = queue->freelist;
+	struct queue_ent *rv = queue->allocator.freelist;
 	while(rv) {
-		spinlock_lock(&queue->freelist_lock);
-		rv = queue->freelist;
+		spinlock_lock(&queue->allocator.lock);
+		rv = queue->allocator.freelist;
 		if(rv) {
-			queue->freelist = rv->next;
-			spinlock_unlock(&queue->freelist_lock);
+			queue->allocator.freelist = rv->next;
+			spinlock_unlock(&queue->allocator.lock);
 			return &rv->user_data;
 		}
-		spinlock_unlock(&queue->freelist_lock);
+		spinlock_unlock(&queue->allocator.lock);
 	}
-	rv = malloc(queue->message_size + offsetof(struct queue_ent, user_data));
+	rv = malloc(queue->allocator.message_size + offsetof(struct queue_ent, user_data));
 	return &rv->user_data;
 }
 
 void message_queue_message_free(struct message_queue *queue, void *message) {
 	struct queue_ent *x = message - offsetof(struct queue_ent, user_data);
-	spinlock_lock(&queue->freelist_lock);
-	x->next = queue->freelist;
-	queue->freelist = x;
-	spinlock_unlock(&queue->freelist_lock);
+	spinlock_lock(&queue->allocator.lock);
+	x->next = queue->allocator.freelist;
+	queue->allocator.freelist = x;
+	spinlock_unlock(&queue->allocator.lock);
 }
 
 void message_queue_write(struct message_queue *queue, void *message) {
 	struct queue_ent *x = message - offsetof(struct queue_ent, user_data);
-	spinlock_lock(&queue->queue_lock);
+	spinlock_lock(&queue->queue.lock);
 	x->next = NULL;
-	*queue->queue_tail = x;
-	queue->queue_tail = &x->next;
-	spinlock_unlock(&queue->queue_lock);
+	*queue->queue.tail = x;
+	queue->queue.tail = &x->next;
+	spinlock_unlock(&queue->queue.lock);
 }
 
 void *message_queue_tryread(struct message_queue *queue) {
-	struct queue_ent *rv = queue->queue_head;
+	struct queue_ent *rv = queue->queue.head;
 	while(rv) {
-		spinlock_lock(&queue->queue_lock);
-		rv = queue->queue_head;
+		spinlock_lock(&queue->queue.lock);
+		rv = queue->queue.head;
 		if(rv) {
-			queue->queue_head = rv->next;
+			queue->queue.head = rv->next;
 			if(!rv->next)
-				queue->queue_tail = &queue->queue_head;
-			spinlock_unlock(&queue->queue_lock);
+				queue->queue.tail = &queue->queue.head;
+			spinlock_unlock(&queue->queue.lock);
 			return &rv->user_data;
 		}
-		spinlock_unlock(&queue->queue_lock);
+		spinlock_unlock(&queue->queue.lock);
 	}
 	return NULL;
 }
 
 int message_queue_destroy(struct message_queue *queue) {
-	struct queue_ent *head = queue->freelist;
+	struct queue_ent *head = queue->allocator.freelist;
 	while(head) {
 		struct queue_ent *next = head->next;
 		free(head);

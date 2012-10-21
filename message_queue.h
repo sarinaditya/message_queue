@@ -2,13 +2,21 @@
 #define MESSAGE_QUEUE_H
 #include <stdint.h>
 
+#ifndef CACHE_LINE_SIZE
+#define CACHE_LINE_SIZE 64
+#endif
+
 struct message_queue {
-	struct queue_ent *freelist;
-	int_fast8_t freelist_lock;
-	int message_size;
-	struct queue_ent *queue_head;
-	struct queue_ent **queue_tail;
-	int_fast8_t queue_lock;
+	struct {
+		struct queue_ent *freelist;
+		int_fast8_t lock;
+		int message_size;
+	} allocator;
+	struct {
+		struct queue_ent *head;
+		struct queue_ent **tail;
+		int_fast8_t lock;
+	} queue __attribute__((aligned(CACHE_LINE_SIZE)));
 };
 
 #ifdef __cplusplus
