@@ -19,7 +19,7 @@ separate spinlock.
 
 # Why should I use this?
 
-* It's fast. Crazy fast. My three-year-old laptop can push over 6,000,000
+* It's fast. Crazy fast. My three-year-old laptop can push almost 8,500,000
   messages per second between threads, _including_ the overhead of allocating
   the messages.
 * It's easy. There are only 7 functions to learn, and you probably only need 6
