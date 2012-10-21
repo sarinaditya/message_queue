@@ -30,6 +30,7 @@ int message_queue_init(struct message_queue *queue, int message_size) {
 	queue->freelist = NULL;
 	queue->freelist_lock = 0;
 	queue->message_size = message_size;
+	return 0;
 }
 
 void *message_queue_message_alloc(struct message_queue *queue) {
