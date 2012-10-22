@@ -2,6 +2,8 @@
 #include <stdlib.h>
 #include <stddef.h>
 #include <stdbool.h>
+#include <stdio.h>
+#include <unistd.h>
 
 struct queue_ent {
 	struct queue_ent *next;
@@ -27,12 +29,20 @@ static inline void spinlock_unlock(int_fast8_t *lock) {
 }
 
 int message_queue_init(struct message_queue *queue, int message_size) {
+	char sem_name[128];
 	queue->freelist = NULL;
 	queue->freelist_lock = 0;
 	queue->message_size = message_size;
 	queue->queue_head = NULL;
 	queue->queue_tail = &queue->queue_head;
 	queue->queue_lock = 0;
+	queue->blocked_readers = 0;
+	snprintf(sem_name, 128, "%d_%p", getpid(), queue);
+	sem_name[127] = '\0';
+	queue->sem = sem_open(sem_name, O_CREAT | O_EXCL, 0600);
+	if(queue->sem == SEM_FAILED)
+		return -1;
+	sem_unlink(sem_name);
 	return 0;
 }
 
@@ -67,6 +77,9 @@ void message_queue_write(struct message_queue *queue, void *message) {
 	*queue->queue_tail = x;
 	queue->queue_tail = &x->next;
 	spinlock_unlock(&queue->queue_lock);
+	if(queue->blocked_readers) {
+		sem_post(queue->sem);
+	}
 }
 
 void *message_queue_tryread(struct message_queue *queue) {
@@ -86,6 +99,19 @@ void *message_queue_tryread(struct message_queue *queue) {
 	return NULL;
 }
 
+void *message_queue_read(struct message_queue *queue) {
+	struct queue_ent *rv = message_queue_tryread(queue);
+	while(!rv) {
+		__sync_fetch_and_add(&queue->blocked_readers, 1);
+		rv = message_queue_tryread(queue);
+		if(!rv)
+			sem_wait(queue->sem);
+		__sync_fetch_and_add(&queue->blocked_readers, -1);
+		rv = message_queue_tryread(queue);
+	}
+	return rv;
+}
+
 void message_queue_destroy(struct message_queue *queue) {
 	struct queue_ent *head = queue->freelist;
 	while(head) {
@@ -93,4 +119,5 @@ void message_queue_destroy(struct message_queue *queue) {
 		free(head);
 		head = next;
 	}
+	sem_close(queue->sem);
 }

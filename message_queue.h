@@ -1,6 +1,7 @@
 #ifndef MESSAGE_QUEUE_H
 #define MESSAGE_QUEUE_H
 #include <stdint.h>
+#include <semaphore.h>
 
 /**
  * \brief Message queue structure
@@ -14,6 +15,8 @@ struct message_queue {
 	struct queue_ent *queue_head;
 	struct queue_ent **queue_tail;
 	int_fast8_t queue_lock;
+	int blocked_readers;
+	sem_t *sem;
 };
 
 #ifdef __cplusplus
@@ -78,6 +81,7 @@ void message_queue_write(struct message_queue *queue, void *message);
  *         are available.
  */
 void *message_queue_tryread(struct message_queue *queue);
+void *message_queue_read(struct message_queue *queue);
 
 /**
  * \brief Destroy a message queue structure
