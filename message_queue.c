@@ -4,6 +4,7 @@
 #include <stdbool.h>
 #include <stdio.h>
 #include <unistd.h>
+#include <errno.h>
 
 struct queue_ent {
 	struct queue_ent *next;
@@ -39,7 +40,9 @@ int message_queue_init(struct message_queue *queue, int message_size) {
 	queue->blocked_readers = 0;
 	snprintf(sem_name, 128, "%d_%p", getpid(), queue);
 	sem_name[127] = '\0';
-	queue->sem = sem_open(sem_name, O_CREAT | O_EXCL, 0600);
+	do {
+		queue->sem = sem_open(sem_name, O_CREAT | O_EXCL, 0600);
+	} while(queue->sem == SEM_FAILED && errno == EINTR);
 	sem_unlink(sem_name);
 }
 
@@ -101,8 +104,9 @@ void *message_queue_read(struct message_queue *queue) {
 	while(!rv) {
 		__sync_fetch_and_add(&queue->blocked_readers, 1);
 		rv = message_queue_tryread(queue);
-		if(!rv)
-			sem_wait(queue->sem);
+		if(!rv) {
+			while(sem_wait(queue->sem) && errno == EINTR);
+		}
 		__sync_fetch_and_add(&queue->blocked_readers, -1);
 		rv = message_queue_tryread(queue);
 	}
