@@ -30,6 +30,9 @@ int message_queue_init(struct message_queue *queue, int message_size) {
 	queue->freelist = NULL;
 	queue->freelist_lock = 0;
 	queue->message_size = message_size;
+	queue->queue_head = NULL;
+	queue->queue_tail = &queue->queue_head;
+	queue->queue_lock = 0;
 	return 0;
 }
 
@@ -55,6 +58,32 @@ void message_queue_message_free(struct message_queue *queue, void *message) {
 	x->next = queue->freelist;
 	queue->freelist = x;
 	spinlock_unlock(&queue->freelist_lock);
+}
+
+void message_queue_write(struct message_queue *queue, void *message) {
+	struct queue_ent *x = message - offsetof(struct queue_ent, user_data);
+	spinlock_lock(&queue->queue_lock);
+	x->next = NULL;
+	*queue->queue_tail = x;
+	queue->queue_tail = &x->next;
+	spinlock_unlock(&queue->queue_lock);
+}
+
+void *message_queue_tryread(struct message_queue *queue) {
+	struct queue_ent *rv = queue->queue_head;
+	while(rv) {
+		spinlock_lock(&queue->queue_lock);
+		rv = queue->queue_head;
+		if(rv) {
+			queue->queue_head = rv->next;
+			if(!rv->next)
+				queue->queue_tail = &queue->queue_head;
+			spinlock_unlock(&queue->queue_lock);
+			return &rv->user_data;
+		}
+		spinlock_unlock(&queue->queue_lock);
+	}
+	return NULL;
 }
 
 void message_queue_destroy(struct message_queue *queue) {

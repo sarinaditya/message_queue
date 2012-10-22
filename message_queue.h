@@ -11,6 +11,9 @@ struct message_queue {
 	struct queue_ent *freelist;
 	int_fast8_t freelist_lock;
 	int message_size;
+	struct queue_ent *queue_head;
+	struct queue_ent **queue_tail;
+	int_fast8_t queue_lock;
 };
 
 #ifdef __cplusplus
@@ -55,6 +58,9 @@ void *message_queue_message_alloc(struct message_queue *queue);
  * \param message pointer to the message to be freed
  */
 void message_queue_message_free(struct message_queue *queue, void *message);
+
+void message_queue_write(struct message_queue *queue, void *message);
+void *message_queue_tryread(struct message_queue *queue);
 
 /**
  * \brief Destroy a message queue structure
