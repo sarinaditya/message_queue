@@ -81,6 +81,16 @@ void message_queue_write(struct message_queue *queue, void *message);
  *         are available.
  */
 void *message_queue_tryread(struct message_queue *queue);
+
+/**
+ * \brief Read a message from the queue
+ *
+ * This reads a message from the queue, blocking if necessary until one is
+ * available.
+ *
+ * \param queue pointer to the queue from which to read
+ * \return pointer to the next message on the queue
+ */
 void *message_queue_read(struct message_queue *queue);
 
 /**
