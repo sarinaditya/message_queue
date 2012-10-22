@@ -33,6 +33,7 @@
 #include <stdbool.h>
 #include <stdio.h>
 #include <unistd.h>
+#include <errno.h>
 #include <fcntl.h>
 #include <sched.h>
 
@@ -70,8 +71,13 @@ int message_queue_init(struct message_queue *queue, int message_size) {
 	queue->queue.blocked_readers = 0;
 	snprintf(sem_name, 128, "%d_%p", getpid(), queue);
 	sem_name[127] = '\0';
-	queue->queue.sem = sem_open(sem_name, O_CREAT | O_EXCL, 0600);
+	do {
+		queue->queue.sem = sem_open(sem_name, O_CREAT | O_EXCL, 0600);
+	} while(queue->queue.sem == SEM_FAILED && errno == EINTR);
+	if(queue->queue.sem == SEM_FAILED)
+		return -1;
 	sem_unlink(sem_name);
+	return 0;
 }
 
 void *message_queue_message_alloc(struct message_queue *queue) {
@@ -156,11 +162,11 @@ void *message_queue_read(struct message_queue *queue) {
 			}
 			spinlock_unlock(&queue->queue.lock);
 		}
-		sem_wait(queue->queue.sem);
+		while(sem_wait(queue->queue.sem) && errno == EINTR);
 	}
 }
 
-int message_queue_destroy(struct message_queue *queue) {
+void message_queue_destroy(struct message_queue *queue) {
 	struct queue_ent *head = queue->allocator.freelist;
 	while(head) {
 		struct queue_ent *next = head->next;
