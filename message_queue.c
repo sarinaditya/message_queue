@@ -72,7 +72,7 @@ int message_queue_init(struct message_queue *queue, int message_size) {
 	snprintf(sem_name, 128, "%d_%p", getpid(), queue);
 	sem_name[127] = '\0';
 	do {
-		queue->queue.sem = sem_open(sem_name, O_CREAT | O_EXCL, 0600);
+		queue->queue.sem = sem_open(sem_name, O_CREAT | O_EXCL, 0600, 0);
 	} while(queue->queue.sem == SEM_FAILED && errno == EINTR);
 	if(queue->queue.sem == SEM_FAILED)
 		return -1;
