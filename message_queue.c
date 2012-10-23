@@ -39,7 +39,7 @@ int message_queue_init(struct message_queue *queue, int message_size) {
 	queue->blocked_readers = 0;
 	snprintf(sem_name, 128, "%d_%p", getpid(), queue);
 	sem_name[127] = '\0';
-	queue->sem = sem_open(sem_name, O_CREAT | O_EXCL, 0600);
+	queue->sem = sem_open(sem_name, O_CREAT | O_EXCL, 0600, 0);
 	sem_unlink(sem_name);
 }
 
