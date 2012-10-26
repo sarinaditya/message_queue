@@ -16,7 +16,6 @@ struct message_queue {
 	void *memory;
 	struct {
 		void **freelist;
-		unsigned int freelist_size;
 		unsigned int free_blocks;
 		unsigned int allocpos;
 		unsigned int freepos;
@@ -39,7 +38,7 @@ struct message_queue {
  * \param message_size size in bytes of the largest message that will be sent
  *        on this queue
  * \param max_depth the maximum number of message to allow in the queue at
- *        once
+ *        once. This will be rounded to the next highest power of two.
  *
  * \return 0 if successful, or nonzero if an error occured
  */

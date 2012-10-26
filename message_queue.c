@@ -36,27 +36,23 @@ static inline int max(int x, int y) {
 
 int message_queue_init(struct message_queue *queue, int message_size, int max_depth) {
 	queue->message_size = pad_size(message_size);
-	queue->max_depth = max_depth;
+	queue->max_depth = round_to_pow2(max_depth);
 	queue->memory = malloc(queue->message_size * max_depth);
 	if(!queue->memory)
 		goto error;
-	queue->allocator.freelist_size = round_to_pow2(max_depth);
-	queue->allocator.freelist = malloc(sizeof(void *) * queue->allocator.freelist_size);
+	queue->allocator.freelist = malloc(sizeof(void *) * queue->max_depth);
 	if(!queue->allocator.freelist)
 		goto error_after_memory;
-	for(int i=0;i<max_depth;++i) {
+	for(int i=0;i<queue->max_depth;++i) {
 		queue->allocator.freelist[i] = queue->memory + (sizeof(void *) * i);
 	}
-	for(int i=max_depth;i<queue->allocator.freelist_size;++i) {
-		queue->allocator.freelist[i] = NULL;
-	}
-	queue->allocator.free_blocks = max_depth;
+	queue->allocator.free_blocks = queue->max_depth;
 	queue->allocator.allocpos = 0;
-	queue->allocator.freepos = queue->max_depth;
-	queue->queue.queue = malloc(sizeof(void *) * queue->allocator.freelist_size);
+	queue->allocator.freepos = 0;
+	queue->queue.queue = malloc(sizeof(void *) * queue->max_depth);
 	if(!queue->queue.queue)
 		goto error_after_freelist;
-	for(int i=0;i<queue->allocator.freelist_size;++i) {
+	for(int i=0;i<queue->max_depth;++i) {
 		queue->queue.queue[i] = NULL;
 	}
 	queue->queue.entries = 0;
@@ -74,7 +70,7 @@ error:
 
 void *message_queue_message_alloc(struct message_queue *queue) {
 	if(__sync_fetch_and_add(&queue->allocator.free_blocks, -1)) {
-		unsigned int pos = __sync_fetch_and_add(&queue->allocator.allocpos, 1) % queue->allocator.freelist_size;
+		unsigned int pos = __sync_fetch_and_add(&queue->allocator.allocpos, 1) % queue->max_depth;
 		void *rv = queue->allocator.freelist[pos];
 		while(!rv) {
 			usleep(10); __sync_synchronize();
@@ -88,7 +84,7 @@ void *message_queue_message_alloc(struct message_queue *queue) {
 }
 
 void message_queue_message_free(struct message_queue *queue, void *message) {
-	unsigned int pos = __sync_fetch_and_add(&queue->allocator.freepos, 1) % queue->allocator.freelist_size;
+	unsigned int pos = __sync_fetch_and_add(&queue->allocator.freepos, 1) % queue->max_depth;
 	void *cur = queue->allocator.freelist[pos];
 	while(cur) {
 		usleep(10); __sync_synchronize();
@@ -99,7 +95,7 @@ void message_queue_message_free(struct message_queue *queue, void *message) {
 }
 
 void message_queue_write(struct message_queue *queue, void *message) {
-	unsigned int pos = __sync_fetch_and_add(&queue->queue.writepos, 1) % queue->allocator.freelist_size;
+	unsigned int pos = __sync_fetch_and_add(&queue->queue.writepos, 1) % queue->max_depth;
 	void *cur = queue->queue.queue[pos];
 	while(cur) {
 		usleep(10); __sync_synchronize();
@@ -111,7 +107,7 @@ void message_queue_write(struct message_queue *queue, void *message) {
 
 void *message_queue_tryread(struct message_queue *queue) {
 	if(__sync_fetch_and_add(&queue->queue.entries, -1)) {
-		unsigned int pos = __sync_fetch_and_add(&queue->queue.readpos, 1) % queue->allocator.freelist_size;
+		unsigned int pos = __sync_fetch_and_add(&queue->queue.readpos, 1) % queue->max_depth;
 		void *rv = queue->queue.queue[pos];
 		while(!rv) {
 			usleep(10); __sync_synchronize();
