@@ -18,6 +18,8 @@ struct message_queue {
 	void *memory;
 	struct {
 		void **freelist;
+		sem_t *sem;
+		unsigned int blocked_readers;
 		unsigned int free_blocks;
 		unsigned int allocpos;
 		unsigned int freepos;
@@ -52,13 +54,28 @@ int message_queue_init(struct message_queue *queue, int message_size, int max_de
  * \brief Allocate a new message
  *
  * This allocates message_size bytes to be used with this queue. Messages
- * passed to the queue MUST be allocated with this function.
+ * passed to the queue MUST be allocated with this function or with
+ * message_queue_message_alloc_blocking.
  *
  * \param queue pointer to the message queue to which the message will be
  *        written
  * \return pointer to the allocated message, or NULL if no memory is available
  */
 void *message_queue_message_alloc(struct message_queue *queue);
+
+/**
+ * \brief Allocate a new message
+ *
+ * This allocates message_size bytes to be used with this queue. Messages
+ * passed to the queue MUST be allocated with this function or with
+ * message_queue_message_alloc. This function blocks until memory is
+ * available.
+ *
+ * \param queue pointer to the message queue to which the message will be
+ *        written
+ * \return pointer to the allocated message
+ */
+void *message_queue_message_alloc_blocking(struct message_queue *queue);
 
 /**
  * \brief Free a message
