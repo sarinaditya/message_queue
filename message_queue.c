@@ -2,6 +2,8 @@
 #include <inttypes.h>
 #include <stdlib.h>
 #include <unistd.h>
+#include <stdio.h>
+#include <errno.h>
 
 union padding {
 	char chardata;
@@ -35,6 +37,7 @@ static inline int max(int x, int y) {
 }
 
 int message_queue_init(struct message_queue *queue, int message_size, int max_depth) {
+	char sem_name[128];
 	queue->message_size = pad_size(message_size);
 	queue->max_depth = round_to_pow2(max_depth);
 	queue->memory = malloc(queue->message_size * max_depth);
@@ -55,11 +58,22 @@ int message_queue_init(struct message_queue *queue, int message_size, int max_de
 	for(int i=0;i<queue->max_depth;++i) {
 		queue->queue.queue[i] = NULL;
 	}
+	queue->queue.blocked_readers = 0;
+	snprintf(sem_name, 128, "%d_%p", getpid(), queue);
+	sem_name[127] = '\0';
+	do {
+		queue->queue.sem = sem_open(sem_name, O_CREAT | O_EXCL, 0600, 0);
+	} while(queue->queue.sem == SEM_FAILED && errno == EINTR);
+	if(queue->queue.sem == SEM_FAILED)
+		goto error_after_queue;
+	sem_unlink(sem_name);
 	queue->queue.entries = 0;
 	queue->queue.readpos = 0;
 	queue->queue.writepos = 0;
 	return 0;
 
+error_after_queue:
+	free(queue->queue.queue);
 error_after_freelist:
 	free(queue->allocator.freelist);
 error_after_memory:
@@ -103,6 +117,10 @@ void message_queue_write(struct message_queue *queue, void *message) {
 	}
 	queue->queue.queue[pos] = message;
 	__sync_fetch_and_add(&queue->queue.entries, 1);
+	if(queue->queue.blocked_readers) {
+		__sync_fetch_and_add(&queue->queue.blocked_readers, -1);
+		sem_post(queue->queue.sem);
+	}
 }
 
 void *message_queue_tryread(struct message_queue *queue) {
@@ -118,6 +136,15 @@ void *message_queue_tryread(struct message_queue *queue) {
 	}
 	__sync_fetch_and_add(&queue->queue.entries, 1);
 	return NULL;
+}
+
+void *message_queue_read(struct message_queue *queue) {
+	void *rv = message_queue_tryread(queue);
+	while(!rv) {
+		__sync_fetch_and_add(&queue->queue.blocked_readers, 1);
+		while(sem_wait(queue->queue.sem) && errno == EINTR);
+		rv = message_queue_tryread(queue);
+	}
 }
 
 void message_queue_destroy(struct message_queue *queue) {

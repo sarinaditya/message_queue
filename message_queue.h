@@ -5,6 +5,8 @@
 #define CACHE_LINE_SIZE 64
 #endif
 
+#include <semaphore.h>
+
 /**
  * \brief Message queue structure
  *
@@ -22,6 +24,8 @@ struct message_queue {
 	} allocator __attribute__((aligned(CACHE_LINE_SIZE)));
 	struct {
 		void **queue;
+		sem_t *sem;
+		unsigned int blocked_readers;
 		unsigned int entries;
 		unsigned int readpos;
 		unsigned int writepos;
@@ -88,6 +92,17 @@ void message_queue_write(struct message_queue *queue, void *message);
  *         are available.
  */
 void *message_queue_tryread(struct message_queue *queue);
+
+/**
+ * \brief Read a message from the queue
+ *
+ * This reads a message from the queue, blocking if necessary until one is
+ * available.
+ *
+ * \param queue pointer to the queue from which to read
+ * \return pointer to the next message on the queue
+ */
+void *message_queue_read(struct message_queue *queue);
 
 /**
  * \brief Destroy a message queue structure
