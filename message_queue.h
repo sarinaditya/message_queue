@@ -29,12 +29,12 @@
 
 #ifndef MESSAGE_QUEUE_H
 #define MESSAGE_QUEUE_H
-#include <stdint.h>
-#include <semaphore.h>
 
 #ifndef CACHE_LINE_SIZE
 #define CACHE_LINE_SIZE 64
 #endif
+
+#include <semaphore.h>
 
 /**
  * \brief Message queue structure
@@ -42,23 +42,26 @@
  * This structure is passed to all message_queue API calls
  */
 struct message_queue {
+	unsigned int message_size;
+	unsigned int max_depth;
+	void *memory;
 	struct {
-		struct queue_ent *freelist;
-		int_fast8_t lock;
-		int message_size;
-	} allocator;
-	struct {
-		struct queue_ent *head;
-		struct queue_ent **tail;
-		int_fast8_t lock;
-		int blocked_readers;
+		void **freelist;
 		sem_t *sem;
+		unsigned int blocked_readers;
+		unsigned int free_blocks;
+		unsigned int allocpos;
+		unsigned int freepos;
+	} allocator __attribute__((aligned(CACHE_LINE_SIZE)));
+	struct {
+		void **queue;
+		sem_t *sem;
+		unsigned int blocked_readers;
+		unsigned int entries;
+		unsigned int readpos;
+		unsigned int writepos;
 	} queue __attribute__((aligned(CACHE_LINE_SIZE)));
 };
-
-#ifdef __cplusplus
-extern "C" {
-#endif
 
 /**
  * \brief Initialize a message queue structure
@@ -69,22 +72,39 @@ extern "C" {
  * \param queue pointer to the message queue structure to initialize
  * \param message_size size in bytes of the largest message that will be sent
  *        on this queue
+ * \param max_depth the maximum number of message to allow in the queue at
+ *        once. This will be rounded to the next highest power of two.
  *
  * \return 0 if successful, or nonzero if an error occured
  */
-int message_queue_init(struct message_queue *queue, int message_size);
+int message_queue_init(struct message_queue *queue, int message_size, int max_depth);
 
 /**
  * \brief Allocate a new message
  *
  * This allocates message_size bytes to be used with this queue. Messages
- * passed to the queue MUST be allocated with this function.
+ * passed to the queue MUST be allocated with this function or with
+ * message_queue_message_alloc_blocking.
  *
  * \param queue pointer to the message queue to which the message will be
  *        written
  * \return pointer to the allocated message, or NULL if no memory is available
  */
 void *message_queue_message_alloc(struct message_queue *queue);
+
+/**
+ * \brief Allocate a new message
+ *
+ * This allocates message_size bytes to be used with this queue. Messages
+ * passed to the queue MUST be allocated with this function or with
+ * message_queue_message_alloc. This function blocks until memory is
+ * available.
+ *
+ * \param queue pointer to the message queue to which the message will be
+ *        written
+ * \return pointer to the allocated message
+ */
+void *message_queue_message_alloc_blocking(struct message_queue *queue);
 
 /**
  * \brief Free a message
@@ -138,9 +158,5 @@ void *message_queue_read(struct message_queue *queue);
  * \param queue pointer to the message queue to destroy
  */
 void message_queue_destroy(struct message_queue *queue);
-
-#ifdef __cplusplus
-}
-#endif
 
 #endif
