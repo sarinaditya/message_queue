@@ -19,13 +19,13 @@ struct message_queue {
 		unsigned int free_blocks;
 		unsigned int allocpos;
 		unsigned int freepos;
-	} allocator;
+	} allocator __attribute__((aligned(CACHE_LINE_SIZE)));
 	struct {
 		void **queue;
 		unsigned int entries;
 		unsigned int readpos;
 		unsigned int writepos;
-	} queue;
+	} queue __attribute__((aligned(CACHE_LINE_SIZE)));
 };
 
 /**
