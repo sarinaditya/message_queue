@@ -125,6 +125,7 @@ void *message_queue_tryread(struct message_queue *queue) {
 }
 
 void message_queue_destroy(struct message_queue *queue) {
+	free(queue->queue.queue);
 	free(queue->allocator.freelist);
 	free(queue->memory);
 }
