@@ -174,6 +174,7 @@ void *message_queue_read(struct message_queue *queue) {
 void message_queue_destroy(struct message_queue *queue) {
 	sem_close(queue->queue.sem);
 	free(queue->queue.queue);
+	sem_close(queue->allocator.sem);
 	free(queue->allocator.freelist);
 	free(queue->memory);
 }
