@@ -23,7 +23,7 @@ struct message_queue {
 	} allocator;
 	struct {
 		void **queue;
-		unsigned int entries;
+		int entries;
 		unsigned int readpos;
 		unsigned int writepos;
 	} queue;
