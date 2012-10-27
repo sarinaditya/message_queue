@@ -115,6 +115,7 @@ void *message_queue_message_alloc_blocking(struct message_queue *queue) {
 		while(sem_wait(queue->allocator.sem) && errno == EINTR);
 		rv = message_queue_message_alloc(queue);
 	}
+	return rv;
 }
 
 void message_queue_message_free(struct message_queue *queue, void *message) {
