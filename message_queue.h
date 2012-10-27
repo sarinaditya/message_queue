@@ -21,6 +21,12 @@ struct message_queue {
 		unsigned int allocpos;
 		unsigned int freepos;
 	} allocator;
+	struct {
+		void **queue;
+		unsigned int entries;
+		unsigned int readpos;
+		unsigned int writepos;
+	} queue;
 };
 
 /**
@@ -63,6 +69,26 @@ void *message_queue_message_alloc(struct message_queue *queue);
  * \param message pointer to the message to be freed
  */
 void message_queue_message_free(struct message_queue *queue, void *message);
+
+/**
+ * \brief Write a message to the queue
+ *
+ * Messages must have been allocated from the same queue by
+ * message_queue_message_alloc to be passed to this function.
+ *
+ * \param queue pointer to the queue to which to write
+ * \param message pointer to the message to write to the queue
+ */
+void message_queue_write(struct message_queue *queue, void *message);
+
+/**
+ * \brief Read a message from the queue if one is available
+ *
+ * \param queue pointer to the queue from which to read
+ * \return pointer to the next message on the queue, or NULL if no messages
+ *         are available.
+ */
+void *message_queue_tryread(struct message_queue *queue);
 
 /**
  * \brief Destroy a message queue structure
