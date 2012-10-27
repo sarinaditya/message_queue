@@ -73,11 +73,11 @@ int message_queue_init(struct message_queue *queue, int message_size, int max_de
 	queue->memory = malloc(queue->message_size * max_depth);
 	if(!queue->memory)
 		goto error;
-	queue->allocator.freelist = malloc(sizeof(void *) * queue->max_depth);
-	if(!queue->allocator.freelist)
+	queue->freelist = malloc(sizeof(void *) * queue->max_depth);
+	if(!queue->freelist)
 		goto error_after_memory;
 	for(int i=0;i<queue->max_depth;++i) {
-		queue->allocator.freelist[i] = queue->memory + (sizeof(void *) * i);
+		queue->freelist[i] = queue->memory + (sizeof(void *) * i);
 	}
 	snprintf(sem_name, 128, "%d_%p", getpid(), &queue->allocator);
 	sem_name[127] = '\0';
@@ -91,11 +91,11 @@ int message_queue_init(struct message_queue *queue, int message_size, int max_de
 	queue->allocator.free_blocks = queue->max_depth;
 	queue->allocator.allocpos = 0;
 	queue->allocator.freepos = 0;
-	queue->queue.queue = malloc(sizeof(void *) * queue->max_depth);
-	if(!queue->queue.queue)
+	queue->queue_data = malloc(sizeof(void *) * queue->max_depth);
+	if(!queue->queue_data)
 		goto error_after_alloc_sem;
 	for(int i=0;i<queue->max_depth;++i) {
-		queue->queue.queue[i] = NULL;
+		queue->queue_data[i] = NULL;
 	}
 	queue->queue.blocked_readers = 0;
 	snprintf(sem_name, 128, "%d_%p", getpid(), queue);
@@ -112,11 +112,11 @@ int message_queue_init(struct message_queue *queue, int message_size, int max_de
 	return 0;
 
 error_after_queue:
-	free(queue->queue.queue);
+	free(queue->queue_data);
 error_after_alloc_sem:
 	sem_close(queue->allocator.sem);
 error_after_freelist:
-	free(queue->allocator.freelist);
+	free(queue->freelist);
 error_after_memory:
 	free(queue->memory);
 error:
@@ -126,12 +126,12 @@ error:
 void *message_queue_message_alloc(struct message_queue *queue) {
 	if(__sync_fetch_and_add(&queue->allocator.free_blocks, -1) > 0) {
 		unsigned int pos = __sync_fetch_and_add(&queue->allocator.allocpos, 1) % queue->max_depth;
-		void *rv = queue->allocator.freelist[pos];
+		void *rv = queue->freelist[pos];
 		while(!rv) {
 			usleep(10); __sync_synchronize();
-			rv = queue->allocator.freelist[pos];
+			rv = queue->freelist[pos];
 		}
-		queue->allocator.freelist[pos] = NULL;
+		queue->freelist[pos] = NULL;
 		return rv;
 	}
 	__sync_fetch_and_add(&queue->allocator.free_blocks, 1);
@@ -155,12 +155,12 @@ void *message_queue_message_alloc_blocking(struct message_queue *queue) {
 
 void message_queue_message_free(struct message_queue *queue, void *message) {
 	unsigned int pos = __sync_fetch_and_add(&queue->allocator.freepos, 1) % queue->max_depth;
-	void *cur = queue->allocator.freelist[pos];
+	void *cur = queue->freelist[pos];
 	while(cur) {
 		usleep(10); __sync_synchronize();
-		cur = queue->allocator.freelist[pos];
+		cur = queue->freelist[pos];
 	}
-	queue->allocator.freelist[pos] = message;
+	queue->freelist[pos] = message;
 	__sync_fetch_and_add(&queue->allocator.free_blocks, 1);
 	if(queue->allocator.blocked_readers) {
 		__sync_fetch_and_add(&queue->allocator.blocked_readers, -1);
@@ -170,12 +170,12 @@ void message_queue_message_free(struct message_queue *queue, void *message) {
 
 void message_queue_write(struct message_queue *queue, void *message) {
 	unsigned int pos = __sync_fetch_and_add(&queue->queue.writepos, 1) % queue->max_depth;
-	void *cur = queue->queue.queue[pos];
+	void *cur = queue->queue_data[pos];
 	while(cur) {
 		usleep(10); __sync_synchronize();
-		cur = queue->queue.queue[pos];
+		cur = queue->queue_data[pos];
 	}
-	queue->queue.queue[pos] = message;
+	queue->queue_data[pos] = message;
 	__sync_fetch_and_add(&queue->queue.entries, 1);
 	if(queue->queue.blocked_readers) {
 		__sync_fetch_and_add(&queue->queue.blocked_readers, -1);
@@ -186,12 +186,12 @@ void message_queue_write(struct message_queue *queue, void *message) {
 void *message_queue_tryread(struct message_queue *queue) {
 	if(__sync_fetch_and_add(&queue->queue.entries, -1) > 0) {
 		unsigned int pos = __sync_fetch_and_add(&queue->queue.readpos, 1) % queue->max_depth;
-		void *rv = queue->queue.queue[pos];
+		void *rv = queue->queue_data[pos];
 		while(!rv) {
 			usleep(10); __sync_synchronize();
-			rv = queue->queue.queue[pos];
+			rv = queue->queue_data[pos];
 		}
-		queue->queue.queue[pos] = NULL;
+		queue->queue_data[pos] = NULL;
 		return rv;
 	}
 	__sync_fetch_and_add(&queue->queue.entries, 1);
@@ -215,8 +215,8 @@ void *message_queue_read(struct message_queue *queue) {
 
 void message_queue_destroy(struct message_queue *queue) {
 	sem_close(queue->queue.sem);
-	free(queue->queue.queue);
+	free(queue->queue_data);
 	sem_close(queue->allocator.sem);
-	free(queue->allocator.freelist);
+	free(queue->freelist);
 	free(queue->memory);
 }
