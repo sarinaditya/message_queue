@@ -49,12 +49,21 @@ int message_queue_init(struct message_queue *queue, int message_size, int max_de
 	for(int i=0;i<queue->max_depth;++i) {
 		queue->allocator.freelist[i] = queue->memory + (sizeof(void *) * i);
 	}
+	snprintf(sem_name, 128, "%d_%p", getpid(), &queue->allocator);
+	sem_name[127] = '\0';
+	do {
+		queue->allocator.sem = sem_open(sem_name, O_CREAT | O_EXCL, 0600, 0);
+	} while(queue->allocator.sem == SEM_FAILED && errno == EINTR);
+	if(queue->allocator.sem == SEM_FAILED)
+		goto error_after_freelist;
+	sem_unlink(sem_name);
+	queue->allocator.blocked_readers = 0;
 	queue->allocator.free_blocks = queue->max_depth;
 	queue->allocator.allocpos = 0;
 	queue->allocator.freepos = 0;
 	queue->queue.queue = malloc(sizeof(void *) * queue->max_depth);
 	if(!queue->queue.queue)
-		goto error_after_freelist;
+		goto error_after_alloc_sem;
 	for(int i=0;i<queue->max_depth;++i) {
 		queue->queue.queue[i] = NULL;
 	}
@@ -74,6 +83,8 @@ int message_queue_init(struct message_queue *queue, int message_size, int max_de
 
 error_after_queue:
 	free(queue->queue.queue);
+error_after_alloc_sem:
+	sem_close(queue->allocator.sem);
 error_after_freelist:
 	free(queue->allocator.freelist);
 error_after_memory:
@@ -97,6 +108,15 @@ void *message_queue_message_alloc(struct message_queue *queue) {
 	return NULL;
 }
 
+void *message_queue_message_alloc_blocking(struct message_queue *queue) {
+	void *rv = message_queue_message_alloc(queue);
+	while(!rv) {
+		__sync_fetch_and_add(&queue->allocator.blocked_readers, 1);
+		while(sem_wait(queue->allocator.sem) && errno == EINTR);
+		rv = message_queue_message_alloc(queue);
+	}
+}
+
 void message_queue_message_free(struct message_queue *queue, void *message) {
 	unsigned int pos = __sync_fetch_and_add(&queue->allocator.freepos, 1) % queue->max_depth;
 	void *cur = queue->allocator.freelist[pos];
@@ -106,6 +126,10 @@ void message_queue_message_free(struct message_queue *queue, void *message) {
 	}
 	queue->allocator.freelist[pos] = message;
 	__sync_fetch_and_add(&queue->allocator.free_blocks, 1);
+	if(queue->allocator.blocked_readers) {
+		__sync_fetch_and_add(&queue->allocator.blocked_readers, -1);
+		sem_post(queue->allocator.sem);
+	}
 }
 
 void message_queue_write(struct message_queue *queue, void *message) {
