@@ -142,9 +142,15 @@ void *message_queue_message_alloc_blocking(struct message_queue *queue) {
 	void *rv = message_queue_message_alloc(queue);
 	while(!rv) {
 		__sync_fetch_and_add(&queue->allocator.blocked_readers, 1);
+		rv = message_queue_message_alloc(queue);
+		if(rv) {
+			__sync_fetch_and_add(&queue->allocator.blocked_readers, -1);
+			return rv;
+		}
 		while(sem_wait(queue->allocator.sem) && errno == EINTR);
 		rv = message_queue_message_alloc(queue);
 	}
+	return rv;
 }
 
 void message_queue_message_free(struct message_queue *queue, void *message) {
@@ -196,9 +202,15 @@ void *message_queue_read(struct message_queue *queue) {
 	void *rv = message_queue_tryread(queue);
 	while(!rv) {
 		__sync_fetch_and_add(&queue->queue.blocked_readers, 1);
+		rv = message_queue_tryread(queue);
+		if(rv) {
+			__sync_fetch_and_add(&queue->queue.blocked_readers, -1);
+			return rv;
+		}
 		while(sem_wait(queue->queue.sem) && errno == EINTR);
 		rv = message_queue_tryread(queue);
 	}
+	return rv;
 }
 
 void message_queue_destroy(struct message_queue *queue) {
