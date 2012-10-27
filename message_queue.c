@@ -124,7 +124,7 @@ error:
 }
 
 void *message_queue_message_alloc(struct message_queue *queue) {
-	if(__sync_fetch_and_add(&queue->allocator.free_blocks, -1)) {
+	if(__sync_fetch_and_add(&queue->allocator.free_blocks, -1) > 0) {
 		unsigned int pos = __sync_fetch_and_add(&queue->allocator.allocpos, 1) % queue->max_depth;
 		void *rv = queue->allocator.freelist[pos];
 		while(!rv) {
@@ -184,7 +184,7 @@ void message_queue_write(struct message_queue *queue, void *message) {
 }
 
 void *message_queue_tryread(struct message_queue *queue) {
-	if(__sync_fetch_and_add(&queue->queue.entries, -1)) {
+	if(__sync_fetch_and_add(&queue->queue.entries, -1) > 0) {
 		unsigned int pos = __sync_fetch_and_add(&queue->queue.readpos, 1) % queue->max_depth;
 		void *rv = queue->queue.queue[pos];
 		while(!rv) {
