@@ -112,6 +112,11 @@ void *message_queue_message_alloc_blocking(struct message_queue *queue) {
 	void *rv = message_queue_message_alloc(queue);
 	while(!rv) {
 		__sync_fetch_and_add(&queue->allocator.blocked_readers, 1);
+		rv = message_queue_message_alloc(queue);
+		if(rv) {
+			__sync_fetch_and_add(&queue->allocator.blocked_readers, -1);
+			return rv;
+		}
 		while(sem_wait(queue->allocator.sem) && errno == EINTR);
 		rv = message_queue_message_alloc(queue);
 	}
