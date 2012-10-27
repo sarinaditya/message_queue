@@ -145,6 +145,7 @@ void *message_queue_read(struct message_queue *queue) {
 		while(sem_wait(queue->queue.sem) && errno == EINTR);
 		rv = message_queue_tryread(queue);
 	}
+	return rv;
 }
 
 void message_queue_destroy(struct message_queue *queue) {
