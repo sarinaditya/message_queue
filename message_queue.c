@@ -142,6 +142,11 @@ void *message_queue_read(struct message_queue *queue) {
 	void *rv = message_queue_tryread(queue);
 	while(!rv) {
 		__sync_fetch_and_add(&queue->queue.blocked_readers, 1);
+		rv = message_queue_tryread(queue);
+		if(rv) {
+			__sync_fetch_and_add(&queue->queue.blocked_readers, -1);
+			return rv;
+		}
 		while(sem_wait(queue->queue.sem) && errno == EINTR);
 		rv = message_queue_tryread(queue);
 	}
