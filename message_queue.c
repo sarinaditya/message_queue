@@ -62,7 +62,7 @@ error:
 }
 
 void *message_queue_message_alloc(struct message_queue *queue) {
-	if(__sync_fetch_and_add(&queue->allocator.free_blocks, -1)) {
+	if(__sync_fetch_and_add(&queue->allocator.free_blocks, -1) > 0) {
 		unsigned int pos = __sync_fetch_and_add(&queue->allocator.allocpos, 1) % queue->allocator.freelist_size;
 		void *rv = queue->allocator.freelist[pos];
 		while(!rv) {

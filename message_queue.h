@@ -17,7 +17,7 @@ struct message_queue {
 	struct {
 		void **freelist;
 		unsigned int freelist_size;
-		unsigned int free_blocks;
+		int free_blocks;
 		unsigned int allocpos;
 		unsigned int freepos;
 	} allocator;
