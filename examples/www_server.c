@@ -68,11 +68,29 @@ static int is_valid_filename_char(char c) {
 
 struct client_state {
 	enum {CLIENT_INACTIVE, CLIENT_READING, CLIENT_WRITING} state;
+	int close_pending;
+	int rfd;
 	char buf[1024];
-	int pos;
+	int pos, len;
 };
 
 struct client_state client_data[FD_SETSIZE];
+
+static int do_write(int fd, char *data, int len) {
+	if(client_data[fd].state == CLIENT_WRITING) {
+		len = len > 1024 - client_data[fd].len ? 1024 - client_data[fd].len : len;
+		memcpy(client_data[fd].buf+client_data[fd].len, data, len);
+		client_data[fd].len += len;
+		return len;
+	} else {
+		len = len > 1024 ? 1024 : len;
+		memcpy(client_data[fd].buf, data, len);
+		client_data[fd].len = len;
+		client_data[fd].pos = 0;
+		client_data[fd].state = CLIENT_WRITING;
+		return len;
+	}
+}
 
 static int open_http_listener();
 static void handle_client_data(int fd);
@@ -133,26 +151,24 @@ static void generate_client_reply(int fd, const char *filename) {
 			char buf[84];
 			snprintf(buf, 84, "HTTP/1.0 200 OK\r\nContent-type: text/ascii\r\nContent-Length: %lu\r\n\r\n", (unsigned long)st.st_size);
 			buf[83] = '\0';
-			write(fd, buf, strlen(buf));
-			while(copy_data(rfd, fd) > 0);
-			close(rfd);
-			close(fd);
+			client_data[fd].rfd = rfd;
+			do_write(fd, buf, strlen(buf));
 			return;
 		}
 	}
 	char buf[39];
 	snprintf(buf, 39, "HTTP/1.0 %s\r\n\r\n", errno_to_http_status());
 	buf[38] = '\0';
-	write(fd, buf, strlen(buf));
+	do_write(fd, buf, strlen(buf));
 	close(rfd);
-	close(fd);
+	client_data[fd].close_pending = 1;
 }
 
 static int copy_data(int rfd, int fd) {
 	char buf[1024];
 	ssize_t r = read(rfd, buf, 1024);
 	if(r)
-		write(fd, buf, r);
+		do_write(fd, buf, r);
 	return r;
 }
 
@@ -187,13 +203,32 @@ int main(int argc, char *argv[]) {
 					socklen_t peer_len = sizeof(peer_addr);
 					int cfd = accept(fd, (struct sockaddr *)&peer_addr, &peer_len);
 					if(cfd >= 0) {
+						int flags = fcntl(cfd, F_GETFL, 0);
+						fcntl(fd, F_SETFL, flags | O_NONBLOCK);
 						client_data[cfd].state = CLIENT_READING;
+						client_data[cfd].close_pending = 0;
 						client_data[cfd].pos = 0;
 					}
 				}
 				for(int i=0;i<FD_SETSIZE;++i) {
 					if(i != fd && FD_ISSET(i, &rfds)) {
 						handle_client_data(i);
+					} else if(i != fd && FD_ISSET(i, &wfds)) {
+						int r = write(i, client_data[i].buf+client_data[i].pos, client_data[i].len-client_data[i].pos);
+						if(r >= 0) {
+							client_data[i].pos += r;
+							if(client_data[i].pos == client_data[i].len) {
+								client_data[i].state = CLIENT_INACTIVE;
+								if(client_data[i].close_pending) {
+									close(i);
+								} else {
+									if(copy_data(client_data[i].rfd, i) <= 0) {
+										close(client_data[i].rfd);
+										close(i);
+									}
+								}
+							}
+						}
 					}
 				}
 			}
