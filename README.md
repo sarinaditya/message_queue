@@ -10,19 +10,17 @@ message is anything your application wants to send between threads.
 
 # How does it work?
 
-The library uses a slab allocator protected by a spinlock to allocate memory
-for messages. Then, your application can construct whatever it needs to send
-in-place. The library never copies it--instead, it reserves a few bytes before
-the pointer it returns to track the message internally. When you write the
-message to the queue, it's added to the end of a linked list, protected by a
-separate spinlock.
+The library uses a lock-free allocator to allocate memory for messages. Then,
+your application can construct whatever it needs to send in-place. When you
+write the message to the queue, it's added to a lock-free structure similar to
+the one used to allocate memory.
 
 # Why should I use this?
 
-* It's fast. Crazy fast. My three-year-old laptop can push almost 8,500,000
+* It's fast. Crazy fast. My three-year-old laptop can push around 6,500,000
   messages per second between threads, _including_ the overhead of allocating
   the messages.
-* It's easy. There are only 7 functions to learn, and you probably only need 6
+* It's easy. There are only 8 functions to learn, and you probably only need 6
   of them. Really, there are only 3 concepts to worry about:
   * initialization/teardown,
   * allocation/deallocation, and
@@ -40,8 +38,8 @@ separate spinlock.
 * I have no clue how well it scales past two CPUs. Anyone want to try it on a
   bigger, beefier machine?
 * You have to know how big the largest message you want to send on a given
-  queue is in advance. This is the cost of using a trivial slab allocator to
-  make allocation faster.
+  queue is in advance, and you have to decide on a maximum depth the queue can
+  reach.
 
 # How do I use this?
 
@@ -51,14 +49,25 @@ First, set up a message queue somewhere:
 
 Before using it, you have to initialize it:
 
-    message_queue_init(&queue, 512); /* The biggest message we'll send with
-                                      * this queue is 512 bytes */
+    message_queue_init(&queue, 512, 128); /* The biggest message we'll send
+                                           * with this queue is 512 bytes, and
+                                           * the queue can only be 128
+                                           * messages deep */
 
 To send a message:
 
-    struct my_message *message = message_queue_message_alloc(&queue);
+    struct my_message *message = message_queue_message_alloc_blocking(&queue);
     /* Construct the message here */
     message_queue_write(&queue, message);
+
+Or, if you'd rather discard your message if there's no free memory in the
+queue:
+
+    struct my_message *message = message_queue_message_alloc(&queue);
+    if(message) {
+        /* Construct the message here */
+        message_queue_write(&queue, message);
+    }
 
 To read a message:
 

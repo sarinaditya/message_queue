@@ -111,7 +111,7 @@ static void *worker_threadproc(void *dummy) {
 }
 
 static void threadpool_init() {
-	message_queue_init(&worker_queue, sizeof(struct www_op));
+	message_queue_init(&worker_queue, sizeof(struct www_op), 512);
 	for(int i=0;i<WORKER_THREADS;++i) {
 		pthread_create(&worker_threads[i], NULL, &worker_threadproc, NULL);
 	}
@@ -119,7 +119,7 @@ static void threadpool_init() {
 
 static void threadpool_destroy() {
 	for(int i=0;i<WORKER_THREADS;++i) {
-		struct www_op *poison = message_queue_message_alloc(&worker_queue);
+		struct www_op *poison = message_queue_message_alloc_blocking(&worker_queue);
 		poison->operation = OP_EXIT;
 		message_queue_write(&worker_queue, poison);
 	}
@@ -212,7 +212,7 @@ static void handle_client_request(int fd, char *request) {
 		while(is_valid_filename_char(*filename_end))
 			++filename_end;
 		*filename_end = '\0';
-		struct www_op *message = message_queue_message_alloc(&worker_queue);
+		struct www_op *message = message_queue_message_alloc_blocking(&worker_queue);
 		message->operation = OP_BEGIN;
 		message->filename = filename;
 		message->fd = fd;
@@ -224,7 +224,7 @@ static void handle_client_request(int fd, char *request) {
 
 static void generate_client_reply(int fd, const char *filename) {
 	int rfd = open(filename, O_RDONLY);
-	struct io_op *message = message_queue_message_alloc(&io_queue);
+	struct io_op *message = message_queue_message_alloc_blocking(&io_queue);
 	if(rfd >= 0) {
 		struct stat st;
 		if(!fstat(rfd, &st)) {
@@ -252,7 +252,7 @@ static void generate_client_reply(int fd, const char *filename) {
 }
 
 static int copy_data(int rfd, int fd) {
-	struct io_op *message = message_queue_message_alloc(&io_queue);
+	struct io_op *message = message_queue_message_alloc_blocking(&io_queue);
 	message->len = read(rfd, message->buf, 1024);
 	message->pos = 0;
 	message->fd = fd;
@@ -282,7 +282,7 @@ int main(int argc, char *argv[]) {
 	main_thread = pthread_self();
 	signal(SIGUSR1, &handle_signal);
 	signal(SIGPIPE, SIG_IGN);
-	message_queue_init(&io_queue, sizeof(struct io_op));
+	message_queue_init(&io_queue, sizeof(struct io_op), 128);
 	threadpool_init();
 	int fd = open_http_listener();
 	if(fd >= 0) {
@@ -338,7 +338,7 @@ int main(int argc, char *argv[]) {
 									close(client_data[i].write_op->rfd);
 									close(i);
 								} else {
-									struct www_op *message = message_queue_message_alloc(&worker_queue);
+									struct www_op *message = message_queue_message_alloc_blocking(&worker_queue);
 									message->operation = OP_READ_BLOCK;
 									message->fd = i;
 									message->rfd = client_data[i].write_op->rfd;
