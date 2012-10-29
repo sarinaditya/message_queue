@@ -28,6 +28,17 @@
  */
 
 /*
+ * This sets up a thread pool to handle blocking file I/O operations. Socket
+ * I/O is multiplexed with select in the main thread; socket writes are queued
+ * through a message queue, sending a signal if necessary to wake the main
+ * thread up if it's waiting in select.
+ *
+ * So, this example demonstrates two uses of a message queue:
+ *   * Distributing work to a thread pool
+ *   * Using the actor model to avoid having shared state between threads
+ */
+
+/*
  * This is an example of how to use the message queue. This is NOT a
  * production-ready Web server, or even a good example of how to write a Web
  * server. Please ignore the HTTP bits and focus on the message queue.
@@ -41,6 +52,90 @@
 #include <sys/stat.h>
 #include <errno.h>
 #include <sys/select.h>
+#include <pthread.h>
+#include <signal.h>
+#include "../message_queue.h"
+
+// Forward-declare HTTP handling functions
+
+static int open_http_listener();
+static void handle_client_data(int fd);
+static void handle_client_request(int fd, char *request);
+static void generate_client_reply(int fd, const char *filename);
+static int copy_data(int rfd, int fd);
+
+// Message queue related code
+
+#ifndef WORKER_THREADS
+#define WORKER_THREADS 32
+#endif
+
+struct www_op {
+	enum {OP_BEGIN, OP_READ_BLOCK, OP_EXIT} operation;
+	const char *filename;
+	int rfd, fd;
+};
+
+struct io_op {
+	char buf[1024];
+	int len, pos;
+	int fd, rfd;
+	int close_pending;
+};
+
+static struct message_queue worker_queue;
+static struct message_queue io_queue;
+
+static pthread_t main_thread;
+static pthread_t worker_threads[WORKER_THREADS];
+
+static int main_blocked;
+
+static void *worker_threadproc(void *dummy) {
+	while(1) {
+		struct www_op *message = message_queue_read(&worker_queue);
+		switch(message->operation) {
+		case OP_BEGIN:
+			generate_client_reply(message->fd, message->filename);
+			break;
+		case OP_READ_BLOCK:
+			copy_data(message->rfd, message->fd);
+			break;
+		case OP_EXIT:
+			message_queue_message_free(&worker_queue, message);
+			return NULL;
+		}
+		message_queue_message_free(&worker_queue, message);
+	}
+	return NULL;
+}
+
+static void threadpool_init() {
+	message_queue_init(&worker_queue, sizeof(struct www_op));
+	for(int i=0;i<WORKER_THREADS;++i) {
+		pthread_create(&worker_threads[i], NULL, &worker_threadproc, NULL);
+	}
+}
+
+static void threadpool_destroy() {
+	for(int i=0;i<WORKER_THREADS;++i) {
+		struct www_op *poison = message_queue_message_alloc(&worker_queue);
+		poison->operation = OP_EXIT;
+		message_queue_write(&worker_queue, poison);
+	}
+	for(int i=0;i<WORKER_THREADS;++i) {
+		pthread_join(worker_threads[i], NULL);
+	}
+	message_queue_destroy(&worker_queue);
+}
+
+static void wake_main_thread() {
+	if(__sync_lock_test_and_set(&main_blocked, 0)) {
+		pthread_kill(main_thread, SIGUSR1);
+	}
+}
+
+// A terrible and incomplete HTTP server follows.
 
 // Utility functions
 
@@ -68,35 +163,12 @@ static int is_valid_filename_char(char c) {
 
 struct client_state {
 	enum {CLIENT_INACTIVE, CLIENT_READING, CLIENT_WRITING} state;
-	int close_pending;
-	int rfd;
 	char buf[1024];
-	int pos, len;
+	int pos;
+	struct io_op *write_op;
 };
 
 struct client_state client_data[FD_SETSIZE];
-
-static int do_write(int fd, char *data, int len) {
-	if(client_data[fd].state == CLIENT_WRITING) {
-		len = len > 1024 - client_data[fd].len ? 1024 - client_data[fd].len : len;
-		memcpy(client_data[fd].buf+client_data[fd].len, data, len);
-		client_data[fd].len += len;
-		return len;
-	} else {
-		len = len > 1024 ? 1024 : len;
-		memcpy(client_data[fd].buf, data, len);
-		client_data[fd].len = len;
-		client_data[fd].pos = 0;
-		client_data[fd].state = CLIENT_WRITING;
-		return len;
-	}
-}
-
-static int open_http_listener();
-static void handle_client_data(int fd);
-static void handle_client_request(int fd, char *request);
-static void generate_client_reply(int fd, const char *filename);
-static int copy_data(int rfd, int fd);
 
 static int open_http_listener() {
 	int fd = socket(PF_INET, SOCK_STREAM, 0);
@@ -139,45 +211,84 @@ static void handle_client_request(int fd, char *request) {
 		while(is_valid_filename_char(*filename_end))
 			++filename_end;
 		*filename_end = '\0';
-		generate_client_reply(fd, filename);
+		struct www_op *message = message_queue_message_alloc(&worker_queue);
+		message->operation = OP_BEGIN;
+		message->filename = filename;
+		message->fd = fd;
+		message_queue_write(&worker_queue, message);
 	}
 }
 
 static void generate_client_reply(int fd, const char *filename) {
 	int rfd = open(filename, O_RDONLY);
+	struct io_op *message = message_queue_message_alloc(&io_queue);
 	if(rfd >= 0) {
 		struct stat st;
 		if(!fstat(rfd, &st)) {
-			char buf[84];
-			snprintf(buf, 84, "HTTP/1.0 200 OK\r\nContent-type: text/ascii\r\nContent-Length: %lu\r\n\r\n", (unsigned long)st.st_size);
-			buf[83] = '\0';
-			client_data[fd].rfd = rfd;
-			do_write(fd, buf, strlen(buf));
+			snprintf(message->buf, 1024, "HTTP/1.0 200 OK\r\nContent-type: text/ascii\r\nContent-Length: %lu\r\n\r\n", (unsigned long)st.st_size);
+			message->buf[1023]  = '\0';
+			message->len = strlen(message->buf);
+			message->pos = 0;
+			message->fd = fd;
+			message->rfd = rfd;
+			message->close_pending = 0;
+			message_queue_write(&io_queue, message);
+			wake_main_thread();
 			return;
 		}
 	}
-	char buf[39];
-	snprintf(buf, 39, "HTTP/1.0 %s\r\n\r\n", errno_to_http_status());
-	buf[38] = '\0';
-	do_write(fd, buf, strlen(buf));
-	close(rfd);
-	client_data[fd].close_pending = 1;
+	snprintf(message->buf, 1024, "HTTP/1.0 %s\r\n\r\n", errno_to_http_status());
+	message->len = strlen(message->buf);
+	message->pos = 0;
+	message->fd = fd;
+	message->rfd = rfd;
+	message->close_pending = 1;
+	message->buf[1024] = '\0';
+	message_queue_write(&io_queue, message);
+	wake_main_thread();
 }
 
 static int copy_data(int rfd, int fd) {
-	char buf[1024];
-	ssize_t r = read(rfd, buf, 1024);
-	if(r)
-		do_write(fd, buf, r);
-	return r;
+	struct io_op *message = message_queue_message_alloc(&io_queue);
+	message->len = read(rfd, message->buf, 1024);
+	message->pos = 0;
+	message->fd = fd;
+	message->rfd = rfd;
+	if(message->len) {
+		message->close_pending = 0;
+	} else {
+		message->len = 0;
+		message->close_pending = 1;
+	}
+	message_queue_write(&io_queue, message);
+	wake_main_thread();
+}
+
+static void service_io_message_queue() {
+	struct io_op *message;
+	while(message = message_queue_tryread(&io_queue)) {
+		client_data[message->fd].state = CLIENT_WRITING;
+		client_data[message->fd].write_op = message;
+	}
+}
+
+static void handle_signal(int signal) {
 }
 
 int main(int argc, char *argv[]) {
+	main_thread = pthread_self();
+	signal(SIGUSR1, &handle_signal);
+	signal(SIGPIPE, SIG_IGN);
+	message_queue_init(&io_queue, sizeof(struct io_op));
+	threadpool_init();
 	int fd = open_http_listener();
 	if(fd >= 0) {
 		while(1) {
 			fd_set rfds, wfds;
 			int max_fd, r;
+			main_blocked = 1;
+			__sync_synchronize();
+			service_io_message_queue();
 			FD_ZERO(&rfds);
 			FD_ZERO(&wfds);
 			max_fd = 0;
@@ -193,6 +304,8 @@ int main(int argc, char *argv[]) {
 			}
 			max_fd = fd > max_fd ? fd : max_fd;
 			r = select(max_fd+1, &rfds, &wfds, NULL, NULL);
+			main_blocked = 0;
+			__sync_synchronize();
 			if(r < 0 && errno != EINTR) {
 				perror("Error in select");
 				return -1;
@@ -206,7 +319,6 @@ int main(int argc, char *argv[]) {
 						int flags = fcntl(cfd, F_GETFL, 0);
 						fcntl(fd, F_SETFL, flags | O_NONBLOCK);
 						client_data[cfd].state = CLIENT_READING;
-						client_data[cfd].close_pending = 0;
 						client_data[cfd].pos = 0;
 					}
 				}
@@ -214,24 +326,33 @@ int main(int argc, char *argv[]) {
 					if(i != fd && FD_ISSET(i, &rfds)) {
 						handle_client_data(i);
 					} else if(i != fd && FD_ISSET(i, &wfds)) {
-						int r = write(i, client_data[i].buf+client_data[i].pos, client_data[i].len-client_data[i].pos);
+						int r = write(i, client_data[i].write_op->buf+client_data[i].write_op->pos, client_data[i].write_op->len-client_data[i].write_op->pos);
 						if(r >= 0) {
-							client_data[i].pos += r;
-							if(client_data[i].pos == client_data[i].len) {
+							client_data[i].write_op->pos += r;
+							if(client_data[i].write_op->pos == client_data[i].write_op->len) {
 								client_data[i].state = CLIENT_INACTIVE;
-								if(client_data[i].close_pending) {
+								if(client_data[i].write_op->close_pending) {
+									close(client_data[i].write_op->rfd);
 									close(i);
 								} else {
-									if(copy_data(client_data[i].rfd, i) <= 0) {
-										close(client_data[i].rfd);
-										close(i);
-									}
+									struct www_op *message = message_queue_message_alloc(&worker_queue);
+									message->operation = OP_READ_BLOCK;
+									message->fd = i;
+									message->rfd = client_data[i].write_op->rfd;
+									message_queue_write(&worker_queue, message);
 								}
+								message_queue_message_free(&io_queue, client_data[i].write_op);
 							}
+						} else {
+							close(client_data[i].write_op->rfd);
+							close(i);
+							message_queue_message_free(&io_queue, client_data[i].write_op);
+							client_data[i].state = CLIENT_INACTIVE;
 						}
 					}
 				}
 			}
+			service_io_message_queue();
 		}
 	} else {
 		perror("Error listening on *:8080");
