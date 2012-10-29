@@ -199,9 +199,10 @@ static void handle_client_data(int fd) {
 			handle_client_request(fd, client_data[fd].buf);
 			return;
 		}
+	} else {
+		client_data[fd].state = CLIENT_INACTIVE;
+		close(fd);
 	}
-	client_data[fd].state = CLIENT_INACTIVE;
-	close(fd);
 }
 
 static void handle_client_request(int fd, char *request) {
@@ -216,6 +217,8 @@ static void handle_client_request(int fd, char *request) {
 		message->filename = filename;
 		message->fd = fd;
 		message_queue_write(&worker_queue, message);
+	} else {
+		close(fd);
 	}
 }
 
