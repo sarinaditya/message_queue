@@ -40,6 +40,7 @@
 #include <fcntl.h>
 #include <sys/stat.h>
 #include <errno.h>
+#include <sys/select.h>
 
 // Utility functions
 
@@ -65,8 +66,16 @@ static int is_valid_filename_char(char c) {
 
 // HTTP request processing pipeline
 
+struct client_state {
+	enum {CLIENT_INACTIVE, CLIENT_READING, CLIENT_WRITING} state;
+	char buf[1024];
+	int pos;
+};
+
+struct client_state client_data[FD_SETSIZE];
+
 static int open_http_listener();
-static void handle_client(int fd);
+static void handle_client_data(int fd);
 static void handle_client_request(int fd, char *request);
 static void generate_client_reply(int fd, const char *filename);
 static int copy_data(int rfd, int fd);
@@ -90,17 +99,18 @@ static int open_http_listener() {
 	return fd;
 }
 
-static void handle_client(int fd) {
-	char buf[1024];
-	int pos = 0, r;
-	while((r = read(fd, buf+pos, 1024-pos)) > 0) {
-		pos += r;
-		if(pos >= 4 && !strncmp(buf+pos-4, "\r\n\r\n", 4)) {
-			buf[pos] = '\0';
-			handle_client_request(fd, buf);
+static void handle_client_data(int fd) {
+	int r;
+	if((r = read(fd, client_data[fd].buf+client_data[fd].pos, 1024-client_data[fd].pos)) > 0) {
+		client_data[fd].pos += r;
+		if(client_data[fd].pos >= 4 && !strncmp(client_data[fd].buf+client_data[fd].pos-4, "\r\n\r\n", 4)) {
+			client_data[fd].buf[client_data[fd].pos] = '\0';
+			client_data[fd].state = CLIENT_INACTIVE;
+			handle_client_request(fd, client_data[fd].buf);
 			return;
 		}
 	}
+	client_data[fd].state = CLIENT_INACTIVE;
 	close(fd);
 }
 
@@ -150,11 +160,42 @@ int main(int argc, char *argv[]) {
 	int fd = open_http_listener();
 	if(fd >= 0) {
 		while(1) {
-			struct sockaddr_in peer_addr;
-			socklen_t peer_len = sizeof(peer_addr);
-			int cfd = accept(fd, (struct sockaddr *)&peer_addr, &peer_len);
-			if(cfd >= 0) {
-				handle_client(cfd);
+			fd_set rfds, wfds;
+			int max_fd, r;
+			FD_ZERO(&rfds);
+			FD_ZERO(&wfds);
+			max_fd = 0;
+			FD_SET(fd, &rfds);
+			for(int i=0;i<FD_SETSIZE;++i) {
+				if(client_data[i].state == CLIENT_READING) {
+					FD_SET(i, &rfds);
+					max_fd = i;
+				} else if(client_data[i].state == CLIENT_WRITING) {
+					FD_SET(i, &wfds);
+					max_fd = i;
+				}
+			}
+			max_fd = fd > max_fd ? fd : max_fd;
+			r = select(max_fd+1, &rfds, &wfds, NULL, NULL);
+			if(r < 0 && errno != EINTR) {
+				perror("Error in select");
+				return -1;
+			}
+			if(r > 0) {
+				if(FD_ISSET(fd, &rfds)) {
+					struct sockaddr_in peer_addr;
+					socklen_t peer_len = sizeof(peer_addr);
+					int cfd = accept(fd, (struct sockaddr *)&peer_addr, &peer_len);
+					if(cfd >= 0) {
+						client_data[cfd].state = CLIENT_READING;
+						client_data[cfd].pos = 0;
+					}
+				}
+				for(int i=0;i<FD_SETSIZE;++i) {
+					if(i != fd && FD_ISSET(i, &rfds)) {
+						handle_client_data(i);
+					}
+				}
 			}
 		}
 	} else {
