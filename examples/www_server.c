@@ -119,6 +119,7 @@ static void threadpool_init() {
 
 static void threadpool_destroy() {
 	for(int i=0;i<WORKER_THREADS;++i) {
+		puts("OP_EXIT");
 		struct www_op *poison = message_queue_message_alloc_blocking(&worker_queue);
 		poison->operation = OP_EXIT;
 		message_queue_write(&worker_queue, poison);
@@ -212,6 +213,7 @@ static void handle_client_request(int fd, char *request) {
 		while(is_valid_filename_char(*filename_end))
 			++filename_end;
 		*filename_end = '\0';
+		puts("OP_BEGIN");
 		struct www_op *message = message_queue_message_alloc_blocking(&worker_queue);
 		message->operation = OP_BEGIN;
 		message->filename = filename;
@@ -246,7 +248,7 @@ static void generate_client_reply(int fd, const char *filename) {
 	message->fd = fd;
 	message->rfd = rfd;
 	message->close_pending = 1;
-	message->buf[1024] = '\0';
+	message->buf[sizeof(message->buf)-1] = '\0';
 	message_queue_write(&io_queue, message);
 	wake_main_thread();
 }
@@ -265,11 +267,12 @@ static int copy_data(int rfd, int fd) {
 	}
 	message_queue_write(&io_queue, message);
 	wake_main_thread();
+	return 0;
 }
 
 static void service_io_message_queue() {
 	struct io_op *message;
-	while(message = message_queue_tryread(&io_queue)) {
+	while((message = message_queue_tryread(&io_queue))) {
 		client_data[message->fd].state = CLIENT_WRITING;
 		client_data[message->fd].write_op = message;
 	}
@@ -329,7 +332,7 @@ int main(int argc, char *argv[]) {
 					if(i != fd && FD_ISSET(i, &rfds)) {
 						handle_client_data(i);
 					} else if(i != fd && FD_ISSET(i, &wfds)) {
-						int r = write(i, client_data[i].write_op->buf+client_data[i].write_op->pos, client_data[i].write_op->len-client_data[i].write_op->pos);
+						r = write(i, client_data[i].write_op->buf+client_data[i].write_op->pos, client_data[i].write_op->len-client_data[i].write_op->pos);
 						if(r >= 0) {
 							client_data[i].write_op->pos += r;
 							if(client_data[i].write_op->pos == client_data[i].write_op->len) {
@@ -338,10 +341,12 @@ int main(int argc, char *argv[]) {
 									close(client_data[i].write_op->rfd);
 									close(i);
 								} else {
+									puts("OP_READ_BLOCK");
 									struct www_op *message = message_queue_message_alloc_blocking(&worker_queue);
 									message->operation = OP_READ_BLOCK;
 									message->fd = i;
 									message->rfd = client_data[i].write_op->rfd;
+									message_queue_write(&worker_queue, message);
 									message_queue_write(&worker_queue, message);
 								}
 								message_queue_message_free(&io_queue, client_data[i].write_op);
@@ -360,4 +365,6 @@ int main(int argc, char *argv[]) {
 	} else {
 		perror("Error listening on *:8080");
 	}
+	threadpool_destroy();
+	return 0;
 }

@@ -46,9 +46,9 @@ union padding {
 };
 
 static inline int pad_size(int size) {
-	return size % sizeof(union padding) ?
+	return size % (sizeof(union padding) ?
 	       (size + (sizeof(union padding) - (size % sizeof(union padding)))) :
-		   size;
+		   size);
 }
 
 static inline uint32_t round_to_pow2(uint32_t x) {
@@ -62,10 +62,6 @@ static inline uint32_t round_to_pow2(uint32_t x) {
 	return x;
 }
 
-static inline int max(int x, int y) {
-	return x > y ? x : y;
-}
-
 int message_queue_init(struct message_queue *queue, int message_size, int max_depth) {
 	char sem_name[128];
 	queue->message_size = pad_size(message_size);
@@ -77,7 +73,7 @@ int message_queue_init(struct message_queue *queue, int message_size, int max_de
 	if(!queue->freelist)
 		goto error_after_memory;
 	for(int i=0;i<queue->max_depth;++i) {
-		queue->freelist[i] = queue->memory + (sizeof(void *) * i);
+		queue->freelist[i] = ((char *)queue->memory) + (message_size * i);
 	}
 	snprintf(sem_name, 128, "%d_%p", getpid(), &queue->allocator);
 	sem_name[127] = '\0';
